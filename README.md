@@ -22,10 +22,10 @@ Code CLI (run `claude` once to log in). For pushing/cloning: [git](https://git-s
 
 ### One-line install (recommended)
 
-In PowerShell (after this repo is on GitHub — replace `<you>`):
+In PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/<you>/screen-solver/main/bootstrap.ps1 | iex
+irm https://raw.githubusercontent.com/m3nd0zit4/screen-solver/main/bootstrap.ps1 | iex
 ```
 
 It clones the repo, installs everything, asks for your bot token once (stored
