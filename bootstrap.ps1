@@ -3,7 +3,7 @@
 #   irm https://raw.githubusercontent.com/<you>/screen-solver/main/bootstrap.ps1 | iex
 
 $ErrorActionPreference = "Stop"
-$repo = "https://github.com/<you>/screen-solver.git"   # <-- set after pushing
+$repo = "https://github.com/m3nd0zit4/screen-solver.git"
 $dest = "$env:USERPROFILE\screen-solver"
 
 Write-Host "== Screen Solver bootstrap ==" -ForegroundColor Cyan

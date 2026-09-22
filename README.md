@@ -34,7 +34,7 @@ encrypted), enables autostart, and leaves a global `solver` command ready.
 ### Manual install
 
 ```powershell
-git clone https://github.com/<you>/screen-solver.git
+git clone https://github.com/m3nd0zit4/screen-solver.git
 cd screen-solver
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```
