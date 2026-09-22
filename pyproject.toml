@@ -1,0 +1,21 @@
+[project]
+name = "screen-solver"
+version = "1.0.0"
+description = "Hotkey → screenshot → Claude → Telegram. Zero-UI screen solver."
+requires-python = ">=3.11"
+dependencies = [
+    "pillow>=12,<13",
+    "requests>=2.32,<3",
+    "rich>=14,<15",
+    "questionary>=2,<3",
+]
+
+[project.scripts]
+solver = "solver:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["solver", "app", "secrets_store"]

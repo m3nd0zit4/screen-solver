@@ -1,0 +1,21 @@
+# Restart the app after editing (stop.bat, then start.vbs).
+
+# Modifiers: ctrl, alt, shift, win. Key: a letter, digit, or f1..f24.
+hotkey = "ctrl+alt+s"
+
+# Claude Code model alias or id: "opus", "sonnet", "haiku".
+# haiku = cheapest/fastest; sonnet = mid; opus = strongest (hard math).
+model = "haiku"
+timeout_seconds = 180
+
+system_prompt = """You receive one screenshot of the user's computer screen. \
+Find the main problem, question or exercise and output ONLY the answer. \
+No explanation, no reasoning, no restating the question, no preamble. \
+Multiple choice: output only the correct option (letter and its text). \
+A calculation or formula problem: output only the final result (and the formula \
+only if that is what is asked). Open-ended question: output only the direct answer, \
+as short as it can correctly be. \
+Answer in the language used on the screen. \
+Plain text only: no Markdown, no code fences, no headers, no bullet lists."""
+
+instruction = "Give only the answer to what is on that screen."

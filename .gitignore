@@ -1,0 +1,6 @@
+.env
+secret.dat
+.venv/
+app.log*
+__pycache__/
+shots/

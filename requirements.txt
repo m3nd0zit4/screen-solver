@@ -1,0 +1,4 @@
+pillow==12.3.0
+requests==2.34.2
+rich==14.2.0
+questionary==2.1.1
