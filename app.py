@@ -32,7 +32,7 @@ kernel32 = ctypes.windll.kernel32
 MODS = {"alt": 0x1, "ctrl": 0x2, "shift": 0x4, "win": 0x8}
 MOD_NOREPEAT = 0x4000
 WM_HOTKEY = 0x0312
-MAX_IMAGE_SIDE = 2400
+MAX_IMAGE_SIDE = 1568  # vision sweet spot: smaller = faster upload + fewer tokens
 MAX_IMAGE_BYTES = 4_500_000
 TELEGRAM_LIMIT = 4000
 
@@ -71,8 +71,21 @@ class MONITORINFO(ctypes.Structure):
                 ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
 
 
-def grab_screen() -> bytes:
+def _crop(image, cfg: dict):
+    """Trim each edge by its configured percentage (0 = keep everything)."""
+    w, h = image.size
+    left = int(w * max(0, min(90, cfg.get("crop_left", 0))) / 100)
+    right = w - int(w * max(0, min(90, cfg.get("crop_right", 0))) / 100)
+    top = int(h * max(0, min(90, cfg.get("crop_top", 0))) / 100)
+    bottom = h - int(h * max(0, min(90, cfg.get("crop_bottom", 0))) / 100)
+    if left < right and top < bottom and (left, top, right, bottom) != (0, 0, w, h):
+        return image.crop((left, top, right, bottom))
+    return image
+
+
+def grab_screen(cfg: dict | None = None) -> bytes:
     """Screenshot of the monitor under the mouse cursor, as PNG or JPEG bytes."""
+    cfg = cfg or {}
     point = wintypes.POINT()
     user32.GetCursorPos(ctypes.byref(point))
     user32.MonitorFromPoint.restype = wintypes.HANDLE
@@ -81,6 +94,7 @@ def grab_screen() -> bytes:
     user32.GetMonitorInfoW(wintypes.HANDLE(monitor), ctypes.byref(info))
     r = info.rcMonitor
     image = ImageGrab.grab(bbox=(r.left, r.top, r.right, r.bottom), all_screens=True)
+    image = _crop(image, cfg)
     image.thumbnail((MAX_IMAGE_SIDE, MAX_IMAGE_SIDE))
 
     buf = io.BytesIO()
@@ -168,7 +182,7 @@ def cleanup_shots() -> None:
 
 def solve(claude_exe: str, tg: Telegram, cfg: dict) -> None:
     try:
-        image = grab_screen()
+        image = grab_screen(cfg)
         tg.send_photo(image, "Captured. Solving...")
         try:
             answer = ask_claude(claude_exe, cfg, image)
