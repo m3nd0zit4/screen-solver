@@ -35,8 +35,32 @@ WM_HOTKEY = 0x0312
 MAX_IMAGE_SIDE = 1568  # vision sweet spot: smaller = faster upload + fewer tokens
 MAX_IMAGE_BYTES = 4_500_000
 TELEGRAM_LIMIT = 4000
+CONFIG_PATH = ROOT / "config.toml"
 
 log = logging.getLogger("screen-solver")
+
+
+def update_config(updates: dict) -> None:
+    """Rewrite `key = value` lines in config.toml in place (comments preserved).
+
+    Strings are re-quoted; numbers written raw. Only simple top-level scalar
+    keys are supported (hotkey, model, zoom, crop_*), which is all we tune.
+    """
+    import re
+    text = CONFIG_PATH.read_text(encoding="utf-8")
+    for key, value in updates.items():
+        if isinstance(value, str):
+            rendered = f'{key} = "{value}"'
+        elif isinstance(value, float):
+            rendered = f"{key} = {round(value, 2)}"
+        else:
+            rendered = f"{key} = {value}"
+        pattern = rf'(?m)^{re.escape(key)}\s*=.*$'
+        if re.search(pattern, text):
+            text = re.sub(pattern, rendered, text, count=1)
+        else:
+            text += f"\n{rendered}\n"
+    CONFIG_PATH.write_text(text, encoding="utf-8")
 
 
 def load_env(path: Path) -> dict:
@@ -49,12 +73,21 @@ def load_env(path: Path) -> dict:
     return env
 
 
+NAMED_KEYS = {
+    "add": 0x6B, "plus": 0x6B, "subtract": 0x6D, "minus": 0x6D,
+    "up": 0x26, "down": 0x28, "left": 0x25, "right": 0x27,
+    "space": 0x20, "enter": 0x0D, "esc": 0x1B, "tab": 0x09,
+}
+
+
 def parse_hotkey(combo: str) -> tuple[int, int]:
     """'ctrl+alt+s' -> (modifier flags, virtual key code)."""
     mods, vk = 0, None
     for part in combo.lower().replace(" ", "").split("+"):
         if part in MODS:
             mods |= MODS[part]
+        elif part in NAMED_KEYS:
+            vk = NAMED_KEYS[part]
         elif len(part) == 1 and part.isalnum():
             vk = ord(part.upper())
         elif part.startswith("f") and part[1:].isdigit() and 1 <= int(part[1:]) <= 24:
@@ -83,6 +116,21 @@ def _crop(image, cfg: dict):
     return image
 
 
+def _zoom(image, factor: float):
+    """Keep the centre region and enlarge it (factor 1.0 = no change)."""
+    try:
+        factor = float(factor)
+    except (TypeError, ValueError):
+        factor = 1.0
+    if factor <= 1.0:
+        return image
+    factor = min(factor, 5.0)
+    w, h = image.size
+    nw, nh = int(w / factor), int(h / factor)
+    left, top = (w - nw) // 2, (h - nh) // 2
+    return image.crop((left, top, left + nw, top + nh))
+
+
 def grab_screen(cfg: dict | None = None) -> bytes:
     """Screenshot of the monitor under the mouse cursor, as PNG or JPEG bytes."""
     cfg = cfg or {}
@@ -95,6 +143,7 @@ def grab_screen(cfg: dict | None = None) -> bytes:
     r = info.rcMonitor
     image = ImageGrab.grab(bbox=(r.left, r.top, r.right, r.bottom), all_screens=True)
     image = _crop(image, cfg)
+    image = _zoom(image, cfg.get("zoom", 1.0))
     image.thumbnail((MAX_IMAGE_SIDE, MAX_IMAGE_SIDE))
 
     buf = io.BytesIO()
@@ -195,10 +244,29 @@ def solve(claude_exe: str, tg: Telegram, cfg: dict) -> None:
         cleanup_shots()
 
 
+def adjust_zoom(tg: Telegram, cfg: dict, delta: float) -> None:
+    """Bump the zoom factor, persist it, and confirm in Telegram (no screen UI)."""
+    new = max(1.0, min(5.0, round(cfg.get("zoom", 1.0) + delta, 2)))
+    cfg["zoom"] = new
+    try:
+        update_config({"zoom": new})
+    except Exception:
+        log.exception("could not persist zoom")
+    try:
+        tg.send_text(f"🔍 zoom = {new:g}")
+    except Exception:
+        pass
+
+
 def worker(jobs: queue.Queue, claude_exe, tg, cfg) -> None:
     while True:
-        jobs.get()
-        solve(claude_exe, tg, cfg)
+        task = jobs.get()
+        if task == "solve":
+            solve(claude_exe, tg, cfg)
+        elif task == "zoom_in":
+            adjust_zoom(tg, cfg, +0.1)
+        elif task == "zoom_out":
+            adjust_zoom(tg, cfg, -0.1)
 
 
 def main() -> None:
@@ -234,16 +302,35 @@ def main() -> None:
     jobs: queue.Queue = queue.Queue()
     threading.Thread(target=worker, args=(jobs, claude_exe, tg, cfg), daemon=True).start()
 
-    mods, vk = parse_hotkey(cfg["hotkey"])
-    if not user32.RegisterHotKey(None, 1, mods | MOD_NOREPEAT, vk):
-        log.error("could not register hotkey %s (taken by another app?)", cfg["hotkey"])
+    # id -> (config key, task). id 1 is the capture hotkey (required).
+    bindings = {1: ("hotkey", "solve"),
+                2: ("hotkey_zoom_in", "zoom_in"),
+                3: ("hotkey_zoom_out", "zoom_out")}
+    registered = {}
+    for hid, (key, task) in bindings.items():
+        combo = (cfg.get(key) or "").strip()
+        if not combo:
+            continue
+        try:
+            mods, vk = parse_hotkey(combo)
+        except ValueError as e:
+            log.error("bad %s: %s", key, e)
+            continue
+        if user32.RegisterHotKey(None, hid, mods | MOD_NOREPEAT, vk):
+            registered[hid] = task
+        else:
+            log.error("could not register %s=%s (taken by another app?)", key, combo)
+    if 1 not in registered:
+        log.error("capture hotkey failed to register; exiting")
         sys.exit(1)
-    log.info("ready, hotkey %s", cfg["hotkey"])
+    log.info("ready, hotkeys: %s", {cfg.get(bindings[h][0]) for h in registered})
 
     msg = wintypes.MSG()
     while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
         if msg.message == WM_HOTKEY:
-            jobs.put(1)
+            task = registered.get(msg.wParam)
+            if task:
+                jobs.put(task)
 
 
 if __name__ == "__main__":

@@ -3,6 +3,15 @@
 # Modifiers: ctrl, alt, shift, win. Key: a letter, digit, or f1..f24.
 hotkey = "ctrl+alt+s"
 
+# Optional hotkeys to adjust zoom live (no capture, just changes the value).
+# Leave empty "" to disable either one.
+hotkey_zoom_in = "ctrl+alt+add"
+hotkey_zoom_out = "ctrl+alt+subtract"
+
+# Zoom: 1.0 = full frame. >1 keeps the centre and enlarges it so small text
+# reads better (e.g. 1.5 keeps the middle two-thirds). Adjust with the hotkeys.
+zoom = 1.0
+
 # Claude Code model alias or id: "opus", "sonnet", "haiku".
 # haiku = cheapest/fastest; sonnet = mid; opus = strongest (hard math).
 model = "haiku"
@@ -10,7 +19,7 @@ timeout_seconds = 180
 
 # Crop the screenshot before sending, as a percentage cut from each edge.
 # 0 = keep everything. Example: crop_top = 8 trims the top 8% (toolbars/headers).
-crop_top = 0
+crop_top = 15
 crop_bottom = 0
 crop_left = 0
 crop_right = 0
@@ -18,14 +27,12 @@ crop_right = 0
 system_prompt = """You receive one screenshot of the user's computer screen. \
 Solve EVERY question, problem or exercise visible in the image — not just the \
 first one. If there are several, number them (1., 2., 3., …) in the order they \
-appear and give each one its answer. Do not skip any. \
-Output ONLY the answers: no explanation, no reasoning, no restating the question, \
-no preamble. \
-Multiple choice: output only the correct option (letter and its text). \
-Calculation or formula: output only the final result (include the formula only if \
-that is what is asked). Open-ended: output only the direct answer, as short as it \
-can correctly be. \
+appear. Do not skip any. \
+For each one, give the answer first, then a brief 'why' — one short sentence \
+(or the key formula/step) explaining it. Keep it tight; no long derivations. \
+Multiple choice: state the correct option (letter and its text), then why. \
+No preamble, no restating the question. \
 Answer in the language used on the screen. \
-Plain text only: no Markdown, no code fences, no headers, no bullet lists."""
+Plain text only: no Markdown, no code fences, no headers, no bullet symbols."""
 
-instruction = "Answer every question visible on that screen. Number them if there is more than one."
+instruction = "Answer every question on that screen. For each, give the answer then a one-line why."

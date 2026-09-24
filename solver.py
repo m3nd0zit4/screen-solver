@@ -138,7 +138,7 @@ MENU = [
     ("start", "Start", "run in background"),
     ("stop", "Stop", "stop the background app"),
     ("restart", "Restart", "stop then start"),
-    ("config", "Edit config", "hotkey, model, prompt"),
+    ("options", "Settings", "hotkey, model, zoom, crop"),
     ("setup", "Set token", "store encrypted"),
     ("verify", "Security check", "PASS/FAIL report"),
     ("log", "View log", "recent lines"),
@@ -268,6 +268,94 @@ def cmd_restart() -> None:
     cmd_start()
 
 
+def _build_hotkey() -> str | None:
+    """Interactive hotkey builder: pick modifiers, then the key."""
+    try:
+        import questionary
+    except Exception:
+        raw = input("  New hotkey (e.g. ctrl+alt+s): ").strip()
+        return raw or None
+    mods = questionary.checkbox(
+        "Modifiers (space to toggle, at least one):",
+        choices=["ctrl", "alt", "shift", "win"]).ask()
+    if not mods:
+        say("Need at least one modifier.", WARN)
+        return None
+    key = questionary.text(
+        "Key (a letter, digit, F1–F12, or a name like add / up):").ask()
+    if not key:
+        return None
+    combo = "+".join(mods + [key.strip().lower()])
+    try:
+        app.parse_hotkey(combo)
+    except ValueError as e:
+        say(f"Invalid: {e}", BAD)
+        return None
+    return combo
+
+
+def cmd_options() -> None:
+    """Interactive settings editor (no need to open the file)."""
+    try:
+        cfg = _cfg()
+    except Exception as e:
+        say(f"config error: {e}", BAD)
+        return
+    fields = [
+        ("hotkey", f"Capture hotkey  [{cfg.get('hotkey')}]"),
+        ("model", f"Model  [{cfg.get('model')}]"),
+        ("zoom", f"Zoom  [{cfg.get('zoom', 1.0)}]"),
+        ("crop_top", f"Crop top %  [{cfg.get('crop_top', 0)}]"),
+        ("crop_bottom", f"Crop bottom %  [{cfg.get('crop_bottom', 0)}]"),
+        ("advanced", "Open full config file"),
+        ("back", "Back"),
+    ]
+    try:
+        import questionary
+        choice = questionary.select(
+            "Edit which setting?",
+            choices=[questionary.Choice(label, value=key) for key, label in fields]).ask()
+    except Exception:
+        for i, (_, label) in enumerate(fields, 1):
+            print(f"  {i}. {label}")
+        raw = input("  choose: ").strip()
+        choice = fields[int(raw) - 1][0] if raw.isdigit() and 1 <= int(raw) <= len(fields) else None
+
+    if choice in (None, "back"):
+        return
+    if choice == "advanced":
+        subprocess.run(["notepad", str(ROOT / "config.toml")])
+        return
+    if choice == "hotkey":
+        combo = _build_hotkey()
+        if combo:
+            app.update_config({"hotkey": combo})
+            say(f"✓ Hotkey set to {combo}. Restarting…", OK)
+            cmd_restart()
+        return
+    if choice == "model":
+        try:
+            import questionary
+            val = questionary.select("Model:", choices=["haiku", "sonnet", "opus"]).ask()
+        except Exception:
+            val = input("  model (haiku/sonnet/opus): ").strip()
+        if val:
+            app.update_config({"model": val})
+            say(f"✓ Model = {val}. Restarting…", OK)
+            cmd_restart()
+        return
+    # numeric fields: zoom, crop_top, crop_bottom
+    raw = input(f"  New value for {choice}: ").strip()
+    try:
+        val = float(raw) if choice == "zoom" else int(raw)
+    except ValueError:
+        say("Not a number.", BAD)
+        return
+    app.update_config({choice: val})
+    say(f"✓ {choice} = {val}. Restarting…", OK)
+    cmd_restart()
+
+
 def cmd_config() -> None:
     subprocess.run(["notepad", str(ROOT / "config.toml")])
 
@@ -378,7 +466,8 @@ def cmd_init() -> None:
 COMMANDS = {
     "init": cmd_init, "test": cmd_test, "status": cmd_status, "start": cmd_start,
     "stop": cmd_stop, "restart": cmd_restart, "config": cmd_config,
-    "setup": cmd_setup, "verify": cmd_verify, "log": cmd_log, "doctor": cmd_doctor,
+    "options": cmd_options, "setup": cmd_setup, "verify": cmd_verify,
+    "log": cmd_log, "doctor": cmd_doctor,
 }
 
 
