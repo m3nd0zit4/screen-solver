@@ -29,9 +29,12 @@ what to do: do EXACTLY what that note asks — nothing more, nothing less. Read 
 the note carefully and implement precisely that change. Return the complete, \
 correct code (not just the changed line), and make it handle edge and boundary \
 cases, not only the examples shown. Put the code inside a fenced block with its \
-language, e.g. ```python … ```. After the block, add one short line saying what \
-you did and why. If the note is unclear, state the single most reasonable \
-interpretation in one line, then implement it.
+language, e.g. ```python … ```. \
+The code block must contain ONLY runnable code — NO comments of any kind (no #, \
+//, or /* */ lines), no docstrings, no explanatory text — so it can be copied and \
+pasted directly. Put any explanation OUTSIDE the block: one short line after it \
+saying what you did. If the note is unclear, state the single most reasonable \
+interpretation in that one line, then implement it.
 
 If the screenshot is a question, problem or exercise (not a coding task): solve \
 EVERY one visible, numbered (1., 2., 3., …) in order, none skipped. Give the \
