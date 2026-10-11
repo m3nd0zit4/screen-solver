@@ -1,38 +1,44 @@
-# Restart the app after editing (stop.bat, then start.vbs).
+# Restart the app after editing:  solver restart
 
+# Capture trigger: an extra mouse button. 4 = back (X1), 5 = forward (X2), 0 = off.
+mouse_button = 5
+
+# Optional keyboard hotkey for capture too (empty "" to disable).
 # Modifiers: ctrl, alt, shift, win. Key: a letter, digit, or f1..f24.
 hotkey = "ctrl+alt+s"
-
-# Optional hotkeys to adjust zoom live (no capture, just changes the value).
-# Leave empty "" to disable either one.
-hotkey_zoom_in = "ctrl+alt+add"
-hotkey_zoom_out = "ctrl+alt+subtract"
-
-# Zoom: 1.0 = full frame. >1 keeps the centre and enlarges it so small text
-# reads better (e.g. 1.5 keeps the middle two-thirds). Adjust with the hotkeys.
-zoom = 1.0
 
 # Claude Code model alias or id: "opus", "sonnet", "haiku".
 # haiku = cheapest/fastest; sonnet = mid; opus = strongest (hard math).
 model = "haiku"
-timeout_seconds = 180
+
+# How long to wait for Claude before giving up (seconds). claude -p needs ~6-15s,
+# so keep this well above that — do NOT set it to a few seconds.
+timeout_seconds = 120
 
 # Crop the screenshot before sending, as a percentage cut from each edge.
 # 0 = keep everything. Example: crop_top = 8 trims the top 8% (toolbars/headers).
 crop_top = 15
 crop_bottom = 0
-crop_left = 0
-crop_right = 0
+crop_left = 5
+crop_right = 5
 
-system_prompt = """You receive one screenshot of the user's computer screen. \
-Solve EVERY question, problem or exercise visible in the image — not just the \
-first one. If there are several, number them (1., 2., 3., …) in the order they \
-appear. Do not skip any. \
-For each one, give the answer first, then a brief 'why' — one short sentence \
-(or the key formula/step) explaining it. Keep it tight; no long derivations. \
-Multiple choice: state the correct option (letter and its text), then why. \
-No preamble, no restating the question. \
-Answer in the language used on the screen. \
-Plain text only: no Markdown, no code fences, no headers, no bullet symbols."""
+system_prompt = """You read one screenshot of the user's screen and respond for Telegram.
 
-instruction = "Answer every question on that screen. For each, give the answer then a one-line why."
+If the screenshot shows code with a comment, TODO, or review note describing \
+what to do: do EXACTLY what that note asks — nothing more, nothing less. Read \
+the note carefully and implement precisely that change. Return the complete, \
+correct code (not just the changed line), and make it handle edge and boundary \
+cases, not only the examples shown. Put the code inside a fenced block with its \
+language, e.g. ```python … ```. After the block, add one short line saying what \
+you did and why. If the note is unclear, state the single most reasonable \
+interpretation in one line, then implement it.
+
+If the screenshot is a question, problem or exercise (not a coding task): solve \
+EVERY one visible, numbered (1., 2., 3., …) in order, none skipped. Give the \
+answer first, then a brief one-line 'why'. Multiple choice: the correct option \
+(letter and text), then why.
+
+No preamble, no restating the question. Answer in the language used on screen. \
+Use fenced code blocks for code; plain text for everything else."""
+
+instruction = "Do exactly what the code comment/question on that screen asks. Put code in a fenced block."

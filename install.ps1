@@ -45,17 +45,9 @@ if (-not (($env:Path -split ';') -contains $bin)) {
 }
 Write-Host "Global command 'solver' installed." -ForegroundColor Green
 
-# 6. Autostart shortcut in the Startup folder
-$startup = [Environment]::GetFolderPath("Startup")
-$lnk = Join-Path $startup "ScreenSolver.lnk"
-$ws = New-Object -ComObject WScript.Shell
-$s = $ws.CreateShortcut($lnk)
-$s.TargetPath = "C:\Windows\System32\wscript.exe"
-$s.Arguments = "`"$root\start.vbs`""
-$s.WorkingDirectory = $root
-$s.Save()
-Write-Host "Autostart enabled ($lnk)" -ForegroundColor Green
+# 6. Autostart is OFF by default. Enable later with:  solver autostart on
+Write-Host "Autostart is OFF (runs only when you start it). Enable with 'solver autostart on'." -ForegroundColor Yellow
 
 # 7. Launch now
 & wscript.exe "$root\start.vbs"
-Write-Host "`nDone. Run 'solver' for the dashboard, or press your hotkey (Ctrl+Alt+S)." -ForegroundColor Green
+Write-Host "`nDone. Run 'solver' for the dashboard, or 'solver start' to run it." -ForegroundColor Green

@@ -6,6 +6,7 @@ Run `solver` with no argument for the interactive dashboard, or a subcommand:
   solver test      capture the screen now and send it (no hotkey needed)
   solver status    is the background app running?
   solver start | stop | restart
+  solver autostart on|off   run at Windows login, or not (default: off)
   solver config    open config.toml
   solver setup     (re)enter the Telegram token, stored encrypted
   solver verify    security checks with PASS/FAIL
@@ -15,6 +16,7 @@ Run `solver` with no argument for the interactive dashboard, or a subcommand:
 The rich/questionary libraries give the pretty UI; if they're missing the CLI
 still works in plain text and tells you how to install them.
 """
+import os
 import shutil
 import subprocess
 import sys
@@ -125,11 +127,18 @@ def _state() -> dict:
     pids = _running()
     try:
         cfg = _cfg()
-        hotkey, model = cfg.get("hotkey", "?"), cfg.get("model", "?")
+        parts = []
+        mb = int(cfg.get("mouse_button", 0) or 0)
+        if mb in (4, 5):
+            parts.append(f"mouse{mb}")
+        if (cfg.get("hotkey") or "").strip():
+            parts.append(cfg["hotkey"])
+        trigger = " / ".join(parts) or "(none)"
+        model = cfg.get("model", "?")
     except Exception:
-        hotkey = model = "(config error)"
+        trigger = model = "(config error)"
     checks = _security_checks()
-    return {"pids": pids, "hotkey": hotkey, "model": model,
+    return {"pids": pids, "trigger": trigger, "model": model,
             "passed": sum(ok for _, ok in checks), "total": len(checks)}
 
 
@@ -138,7 +147,7 @@ MENU = [
     ("start", "Start", "run in background"),
     ("stop", "Stop", "stop the background app"),
     ("restart", "Restart", "stop then start"),
-    ("options", "Settings", "hotkey, model, zoom, crop"),
+    ("options", "Settings", "mouse button, hotkey, model, crop"),
     ("setup", "Set token", "store encrypted"),
     ("verify", "Security check", "PASS/FAIL report"),
     ("log", "View log", "recent lines"),
@@ -166,7 +175,7 @@ def _rich_dashboard():
     t.add_column(style=MUTE, justify="right")
     t.add_column()
     t.add_row("status", status)
-    t.add_row("hotkey", Text(s["hotkey"], style=WARN))
+    t.add_row("trigger", Text(s["trigger"], style=WARN))
     t.add_row("model", Text(s["model"], style="white"))
     t.add_row("security", sec)
     return Panel(t, title="[bold]dashboard[/]", title_align="left",
@@ -179,7 +188,7 @@ def _plain_dashboard() -> None:
     st = f"running (pid {s['pids'][0]})" if s["pids"] else "stopped"
     print("\n  ==== Screen Solver ====")
     print(f"  status   : {st}")
-    print(f"  hotkey   : {s['hotkey']}")
+    print(f"  trigger  : {s['trigger']}")
     print(f"  model    : {s['model']}")
     print(f"  security : {s['passed']}/{s['total']} checks")
     if not HAS_RICH:
@@ -268,6 +277,33 @@ def cmd_restart() -> None:
     cmd_start()
 
 
+def _startup_lnk() -> Path:
+    return Path(os.environ["APPDATA"]) / "Microsoft/Windows/Start Menu/Programs/Startup/ScreenSolver.lnk"
+
+
+def cmd_autostart() -> None:
+    """`solver autostart on|off` — run at Windows login, or not."""
+    arg = (sys.argv[2].lower() if len(sys.argv) > 2 else "").strip()
+    lnk = _startup_lnk()
+    if arg == "on":
+        ps = (f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{lnk}');"
+              f"$s.TargetPath='C:\\Windows\\System32\\wscript.exe';"
+              f"$s.Arguments='\"{ROOT / 'start.vbs'}\"';"
+              f"$s.WorkingDirectory='{ROOT}';$s.Save()")
+        subprocess.run(["powershell", "-NoProfile", "-Command", ps])
+        say("✓ Autostart ON — will run at login.", OK)
+    elif arg == "off":
+        try:
+            lnk.unlink(missing_ok=True)
+        except OSError as e:
+            say(f"Could not remove: {e}", BAD)
+            return
+        say("✓ Autostart OFF — only runs when you start it (solver start).", OK)
+    else:
+        state = "ON" if lnk.exists() else "OFF"
+        say(f"Autostart is {state}. Use: solver autostart on|off", WARN)
+
+
 def _build_hotkey() -> str | None:
     """Interactive hotkey builder: pick modifiers, then the key."""
     try:
@@ -302,11 +338,13 @@ def cmd_options() -> None:
         say(f"config error: {e}", BAD)
         return
     fields = [
+        ("mouse_button", f"Mouse button (4/5/0)  [{cfg.get('mouse_button', 0)}]"),
         ("hotkey", f"Capture hotkey  [{cfg.get('hotkey')}]"),
         ("model", f"Model  [{cfg.get('model')}]"),
-        ("zoom", f"Zoom  [{cfg.get('zoom', 1.0)}]"),
         ("crop_top", f"Crop top %  [{cfg.get('crop_top', 0)}]"),
         ("crop_bottom", f"Crop bottom %  [{cfg.get('crop_bottom', 0)}]"),
+        ("crop_left", f"Crop left %  [{cfg.get('crop_left', 0)}]"),
+        ("crop_right", f"Crop right %  [{cfg.get('crop_right', 0)}]"),
         ("advanced", "Open full config file"),
         ("back", "Back"),
     ]
@@ -344,12 +382,15 @@ def cmd_options() -> None:
             say(f"✓ Model = {val}. Restarting…", OK)
             cmd_restart()
         return
-    # numeric fields: zoom, crop_top, crop_bottom
+    # numeric fields: mouse_button, crop_top/bottom/left/right
     raw = input(f"  New value for {choice}: ").strip()
     try:
-        val = float(raw) if choice == "zoom" else int(raw)
+        val = int(raw)
     except ValueError:
         say("Not a number.", BAD)
+        return
+    if choice == "mouse_button" and val not in (0, 4, 5):
+        say("mouse_button must be 4, 5, or 0.", BAD)
         return
     app.update_config({choice: val})
     say(f"✓ {choice} = {val}. Restarting…", OK)
@@ -465,9 +506,9 @@ def cmd_init() -> None:
 
 COMMANDS = {
     "init": cmd_init, "test": cmd_test, "status": cmd_status, "start": cmd_start,
-    "stop": cmd_stop, "restart": cmd_restart, "config": cmd_config,
-    "options": cmd_options, "setup": cmd_setup, "verify": cmd_verify,
-    "log": cmd_log, "doctor": cmd_doctor,
+    "stop": cmd_stop, "restart": cmd_restart, "autostart": cmd_autostart,
+    "config": cmd_config, "options": cmd_options, "setup": cmd_setup,
+    "verify": cmd_verify, "log": cmd_log, "doctor": cmd_doctor,
 }
 
 

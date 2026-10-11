@@ -6,9 +6,11 @@ so it runs on the logged-in Claude subscription instead of a paid API key.
 Run with pythonw.exe so there is no console.
 """
 import ctypes
+import html
 import io
 import logging
 import queue
+import re
 import shutil
 import subprocess
 import sys
@@ -44,7 +46,7 @@ def update_config(updates: dict) -> None:
     """Rewrite `key = value` lines in config.toml in place (comments preserved).
 
     Strings are re-quoted; numbers written raw. Only simple top-level scalar
-    keys are supported (hotkey, model, zoom, crop_*), which is all we tune.
+    keys are supported (hotkey, model, mouse_button, crop_*), which is all we tune.
     """
     import re
     text = CONFIG_PATH.read_text(encoding="utf-8")
@@ -116,21 +118,6 @@ def _crop(image, cfg: dict):
     return image
 
 
-def _zoom(image, factor: float):
-    """Keep the centre region and enlarge it (factor 1.0 = no change)."""
-    try:
-        factor = float(factor)
-    except (TypeError, ValueError):
-        factor = 1.0
-    if factor <= 1.0:
-        return image
-    factor = min(factor, 5.0)
-    w, h = image.size
-    nw, nh = int(w / factor), int(h / factor)
-    left, top = (w - nw) // 2, (h - nh) // 2
-    return image.crop((left, top, left + nw, top + nh))
-
-
 def grab_screen(cfg: dict | None = None) -> bytes:
     """Screenshot of the monitor under the mouse cursor, as PNG or JPEG bytes."""
     cfg = cfg or {}
@@ -143,7 +130,6 @@ def grab_screen(cfg: dict | None = None) -> bytes:
     r = info.rcMonitor
     image = ImageGrab.grab(bbox=(r.left, r.top, r.right, r.bottom), all_screens=True)
     image = _crop(image, cfg)
-    image = _zoom(image, cfg.get("zoom", 1.0))
     image.thumbnail((MAX_IMAGE_SIDE, MAX_IMAGE_SIDE))
 
     buf = io.BytesIO()
@@ -174,16 +160,97 @@ def _post_with_retry(url: str, *, tries: int = 3, **kwargs):
     raise last
 
 
+_FENCE = re.compile(r"```[ \t]*([\w+.-]*)[ \t]*\n?(.*?)```", re.DOTALL)
+_INLINE = re.compile(r"`([^`\n]+)`")
+_HTML_LIMIT = 3800  # under Telegram's 4096 cap, leaving room for tags
+
+
+def _safe_lang(lang: str) -> str:
+    return re.sub(r"[^\w+.-]", "", lang)[:20]
+
+
+def _render_text(seg: str) -> str:
+    """Escape a prose segment and turn inline `code` into <code> tags."""
+    out, i = [], 0
+    for m in _INLINE.finditer(seg):
+        out.append(html.escape(seg[i:m.start()]))
+        out.append("<code>" + html.escape(m.group(1)) + "</code>")
+        i = m.end()
+    out.append(html.escape(seg[i:]))
+    return "".join(out)
+
+
+def _split_plain(rendered: str, limit: int) -> list[str]:
+    """Split already-HTML prose at newline boundaries so tags stay balanced."""
+    out, cur = [], ""
+    for line in rendered.split("\n"):
+        while len(line) > limit:            # pathological single line
+            if cur:
+                out.append(cur)
+                cur = ""
+            out.append(line[:limit])
+            line = line[limit:]
+        add = ("\n" if cur else "") + line
+        if len(cur) + len(add) > limit:
+            out.append(cur)
+            cur = line
+        else:
+            cur += add
+    if cur.strip():
+        out.append(cur)
+    return out
+
+
+def _code_messages(body: str, lang: str, limit: int) -> list[str]:
+    """One or more <pre><code> messages for a code block, never breaking tags."""
+    open_tag = "<pre><code%s>" % (f' class="language-{_safe_lang(lang)}"' if lang else "")
+    close = "</code></pre>"
+    budget = max(256, limit - len(open_tag) - len(close))
+    step = max(32, budget // 6)             # entity-safe raw chunk size
+    lines: list[str] = []
+    for line in body.strip("\n").split("\n"):
+        if len(line) <= step:
+            lines.append(line)
+        else:
+            lines.extend(line[j:j + step] for j in range(0, len(line), step))
+    out, cur, cur_len = [], [], 0
+    for line in lines:
+        esc_len = len(html.escape(line)) + (1 if cur else 0)
+        if cur and cur_len + esc_len > budget:
+            out.append(open_tag + html.escape("\n".join(cur)) + close)
+            cur, cur_len = [], 0
+            esc_len = len(html.escape(line))
+        cur.append(line)
+        cur_len += esc_len
+    if cur:
+        out.append(open_tag + html.escape("\n".join(cur)) + close)
+    return out
+
+
+def to_telegram_html(text: str, limit: int = _HTML_LIMIT) -> list[str]:
+    """Turn markdown-ish answer (``` fences, `inline`) into Telegram HTML messages."""
+    msgs: list[str] = []
+    pos = 0
+    for m in _FENCE.finditer(text):
+        if m.start() > pos:
+            msgs += _split_plain(_render_text(text[pos:m.start()]), limit)
+        msgs += _code_messages(m.group(2), m.group(1), limit)
+        pos = m.end()
+    if pos < len(text):
+        msgs += _split_plain(_render_text(text[pos:]), limit)
+    return [m for m in msgs if m.strip()] or [html.escape(text) or "(empty answer)"]
+
+
 class Telegram:
     def __init__(self, token: str, chat_id: str):
         self.base = f"https://api.telegram.org/bot{token}"
         self.chat_id = chat_id
 
     def send_text(self, text: str) -> None:
-        for i in range(0, len(text), TELEGRAM_LIMIT):
+        for msg in to_telegram_html(text):
             _post_with_retry(f"{self.base}/sendMessage", timeout=30,
-                             data={"chat_id": self.chat_id,
-                                   "text": text[i:i + TELEGRAM_LIMIT]})
+                             data={"chat_id": self.chat_id, "text": msg,
+                                   "parse_mode": "HTML"})
 
     def send_photo(self, data: bytes, caption: str) -> None:
         ext = "png" if media_type(data) == "image/png" else "jpg"
@@ -197,7 +264,11 @@ def ask_claude(claude_exe: str, cfg: dict, image: bytes) -> str:
     SHOTS.mkdir(exist_ok=True)
     name = "screen.png" if media_type(image) == "image/png" else "screen.jpg"
     (SHOTS / name).write_bytes(image)
-    prompt = f"Read the image file {name} in the current directory. {cfg['instruction']}"
+    # Run in the project ROOT (already a trusted folder) and reference the image
+    # by relative path. Running in a brand-new cwd can make Claude Code block on a
+    # "do you trust this folder?" prompt until the timeout — the "took too long" bug.
+    rel = f"shots/{name}"
+    prompt = f"Read the image file {rel}. {cfg['instruction']}"
     # --setting-sources project: skip the user's hooks/plugins/CLAUDE.md so the
     # answer style is controlled only by config.toml. Read is the only tool.
     result = subprocess.run(
@@ -208,7 +279,7 @@ def ask_claude(claude_exe: str, cfg: dict, image: bytes) -> str:
          "--strict-mcp-config",
          "--tools", "Read",
          "--allowedTools", "Read"],
-        cwd=SHOTS, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace",
         timeout=cfg["timeout_seconds"], stdin=subprocess.DEVNULL,
         creationflags=subprocess.CREATE_NO_WINDOW,
     )
@@ -233,10 +304,16 @@ def solve(claude_exe: str, tg: Telegram, cfg: dict) -> None:
     try:
         image = grab_screen(cfg)
         tg.send_photo(image, "Captured. Solving...")
-        try:
-            answer = ask_claude(claude_exe, cfg, image)
-        except subprocess.TimeoutExpired:
-            answer = "Error: Claude took too long. Try again."
+        answer = None
+        for attempt in (1, 2):                       # one retry on timeout
+            try:
+                answer = ask_claude(claude_exe, cfg, image)
+                break
+            except subprocess.TimeoutExpired:
+                log.warning("claude timeout (attempt %s)", attempt)
+        if answer is None:
+            answer = ("Error: Claude timed out twice. It may be slow or the first "
+                      "run is warming up — try again.")
         tg.send_text(answer)
     except Exception:
         log.exception("solve failed")
@@ -244,29 +321,57 @@ def solve(claude_exe: str, tg: Telegram, cfg: dict) -> None:
         cleanup_shots()
 
 
-def adjust_zoom(tg: Telegram, cfg: dict, delta: float) -> None:
-    """Bump the zoom factor, persist it, and confirm in Telegram (no screen UI)."""
-    new = max(1.0, min(5.0, round(cfg.get("zoom", 1.0) + delta, 2)))
-    cfg["zoom"] = new
-    try:
-        update_config({"zoom": new})
-    except Exception:
-        log.exception("could not persist zoom")
-    try:
-        tg.send_text(f"🔍 zoom = {new:g}")
-    except Exception:
-        pass
-
-
 def worker(jobs: queue.Queue, claude_exe, tg, cfg) -> None:
     while True:
         task = jobs.get()
         if task == "solve":
             solve(claude_exe, tg, cfg)
-        elif task == "zoom_in":
-            adjust_zoom(tg, cfg, +0.1)
-        elif task == "zoom_out":
-            adjust_zoom(tg, cfg, -0.1)
+
+
+# --- Low-level mouse hook, so an extra mouse button (4=back/X1, 5=fwd/X2) fires --
+WH_MOUSE_LL = 14
+WM_XBUTTONDOWN = 0x020B
+HC_ACTION = 0
+LRESULT = ctypes.c_ssize_t
+ULONG_PTR = ctypes.c_size_t
+
+
+class MSLLHOOKSTRUCT(ctypes.Structure):
+    _fields_ = [("pt", wintypes.POINT), ("mouseData", wintypes.DWORD),
+                ("flags", wintypes.DWORD), ("time", wintypes.DWORD),
+                ("dwExtraInfo", ULONG_PTR)]
+
+
+HOOKPROC = ctypes.CFUNCTYPE(LRESULT, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
+_hook_refs = []  # keep proc + handle alive
+
+
+def install_mouse_hook(want_button: int, jobs: queue.Queue) -> bool:
+    """Fire jobs.put('solve') when mouse button 4 or 5 is pressed. Returns success."""
+    if want_button not in (4, 5):
+        return False
+    user32.SetWindowsHookExW.restype = wintypes.HHOOK
+    user32.SetWindowsHookExW.argtypes = [ctypes.c_int, HOOKPROC, wintypes.HINSTANCE,
+                                         wintypes.DWORD]
+    user32.CallNextHookEx.restype = LRESULT
+    user32.CallNextHookEx.argtypes = [wintypes.HHOOK, ctypes.c_int, wintypes.WPARAM,
+                                      wintypes.LPARAM]
+
+    def proc(nCode, wParam, lParam):
+        if nCode == HC_ACTION and wParam == WM_XBUTTONDOWN:
+            data = ctypes.cast(lParam, ctypes.POINTER(MSLLHOOKSTRUCT)).contents
+            xbtn = (data.mouseData >> 16) & 0xFFFF  # 1 = X1 (btn4), 2 = X2 (btn5)
+            if xbtn + 3 == want_button:             # 1->4, 2->5
+                jobs.put("solve")
+        return user32.CallNextHookEx(None, nCode, wParam, lParam)
+
+    cb = HOOKPROC(proc)
+    handle = user32.SetWindowsHookExW(WH_MOUSE_LL, cb, None, 0)
+    if not handle:
+        log.error("could not install mouse hook: %s", ctypes.get_last_error())
+        return False
+    _hook_refs.extend([cb, handle])
+    return True
 
 
 def main() -> None:
@@ -302,35 +407,34 @@ def main() -> None:
     jobs: queue.Queue = queue.Queue()
     threading.Thread(target=worker, args=(jobs, claude_exe, tg, cfg), daemon=True).start()
 
-    # id -> (config key, task). id 1 is the capture hotkey (required).
-    bindings = {1: ("hotkey", "solve"),
-                2: ("hotkey_zoom_in", "zoom_in"),
-                3: ("hotkey_zoom_out", "zoom_out")}
-    registered = {}
-    for hid, (key, task) in bindings.items():
-        combo = (cfg.get(key) or "").strip()
-        if not combo:
-            continue
+    triggers = []
+
+    # Mouse button trigger (primary now): 4 = back (X1), 5 = forward (X2), 0 = off.
+    mouse_button = int(cfg.get("mouse_button", 0) or 0)
+    if mouse_button and install_mouse_hook(mouse_button, jobs):
+        triggers.append(f"mouse{mouse_button}")
+
+    # Optional keyboard hotkey for capture (empty in config = disabled).
+    hk = (cfg.get("hotkey") or "").strip()
+    if hk:
         try:
-            mods, vk = parse_hotkey(combo)
+            mods, vk = parse_hotkey(hk)
+            if user32.RegisterHotKey(None, 1, mods | MOD_NOREPEAT, vk):
+                triggers.append(hk)
+            else:
+                log.error("could not register hotkey %s (taken by another app?)", hk)
         except ValueError as e:
-            log.error("bad %s: %s", key, e)
-            continue
-        if user32.RegisterHotKey(None, hid, mods | MOD_NOREPEAT, vk):
-            registered[hid] = task
-        else:
-            log.error("could not register %s=%s (taken by another app?)", key, combo)
-    if 1 not in registered:
-        log.error("capture hotkey failed to register; exiting")
+            log.error("bad hotkey: %s", e)
+
+    if not triggers:
+        log.error("no capture trigger active (set mouse_button or hotkey); exiting")
         sys.exit(1)
-    log.info("ready, hotkeys: %s", {cfg.get(bindings[h][0]) for h in registered})
+    log.info("ready, triggers: %s", triggers)
 
     msg = wintypes.MSG()
     while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
         if msg.message == WM_HOTKEY:
-            task = registered.get(msg.wParam)
-            if task:
-                jobs.put(task)
+            jobs.put("solve")
 
 
 if __name__ == "__main__":
