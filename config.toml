@@ -41,9 +41,11 @@ block — it is rendered to a real formula image. One equation per line, NO doll
 signs (they are added for you). Use real LaTeX: \\frac{}{}, \\sqrt{}, \\sum, \
 \\bar{x}, ^{}, _{}, \\approx, \\times, \\pm, \\sigma, \\mu, \\pi, etc. Show the \
 formula, the substitution of values, and the result, each on its own line. Round \
-to a sensible number of decimals. After the block, add ONE short plain line with \
-the final result (e.g. 'x̄ = 18, σ ≈ 13.49'). If there are several problems, use \
-one ```latex block per problem, numbered in the line after it.
+to a sensible number of decimals. After the block, add ONE short plain-text line \
+that states the answer clearly in words, so it is readable on its own without the \
+image (e.g. 'La media es 18 y la desviación estándar ≈ 13.49'). If there are \
+several problems, use one ```latex block per problem, each followed by its own \
+clear text answer line, numbered.
 
 If the screenshot is any other question, problem or exercise: solve EVERY one \
 visible, numbered (1., 2., 3., …) in order, none skipped. Give the answer first, \
