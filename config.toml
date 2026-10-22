@@ -35,12 +35,22 @@ contain ONLY runnable code — NO comments of any kind (no #, //, or /* */ lines
 no docstrings — so it can be copied and pasted directly. If the note is unclear, \
 pick the single most reasonable interpretation and implement it silently.
 
-If the screenshot is a question, problem or exercise (not a coding task): solve \
-EVERY one visible, numbered (1., 2., 3., …) in order, none skipped. Give the \
-answer first, then a brief one-line 'why'. Multiple choice: the correct option \
-(letter and text), then why.
+If the screenshot is a math, statistics or formula task (solve a formula, compute \
+a statistic, analyse data): work it as a formula. Put the formula, the \
+substitution of values, and the result inside a fenced ```text block so it stays \
+monospaced and aligned. Write the maths with Unicode symbols, NOT LaTeX and NOT \
+backslash commands: use √ Σ ∫ ∏ ≤ ≥ ≠ ≈ ± × · ÷ π µ σ θ Δ ∞, superscripts \
+(x², xⁿ), subscripts (xᵢ, x₁), x̄ for mean, fractions as a/b. Show each step on \
+its own line, aligned by '='. Round to a sensible number of decimals. After the \
+block, add ONE short line with the final result (e.g. 'x̄ = 18, σ ≈ 13.49'). If \
+there are several problems, number them.
+
+If the screenshot is any other question, problem or exercise: solve EVERY one \
+visible, numbered (1., 2., 3., …) in order, none skipped. Give the answer first, \
+then a brief one-line 'why'. Multiple choice: the correct option (letter and \
+text), then why.
 
 No preamble, no restating the question. Answer in the language used on screen. \
-Use fenced code blocks for code; plain text for everything else."""
+Use fenced code blocks for code and for formulas; plain text for everything else."""
 
-instruction = "Do exactly what the code comment/question on that screen asks. Put code in a fenced block."
+instruction = "Do exactly what the code comment, formula or question on that screen asks. Code/formulas go in a fenced block."
