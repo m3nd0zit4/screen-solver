@@ -241,6 +241,27 @@ def to_telegram_html(text: str, limit: int = _HTML_LIMIT) -> list[str]:
     return [m for m in msgs if m.strip()] or [html.escape(text) or "(empty answer)"]
 
 
+_LATEX_FENCE = re.compile(r"```latex[ \t]*\n?(.*?)```", re.DOTALL)
+
+
+def render_latex_block(lines: list[str]) -> bytes:
+    """Render LaTeX equation lines to a crisp PNG (real math typesetting)."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    lines = [ln.strip() for ln in lines if ln.strip()] or ["\\ "]
+    fig = plt.figure(figsize=(7, 0.85 * len(lines)))
+    for i, ln in enumerate(lines):
+        y = 1 - (i + 0.5) / len(lines)
+        fig.text(0.03, y, f"${ln}$", fontsize=26, va="center", ha="left", color="black")
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=200, bbox_inches="tight",
+                pad_inches=0.35, facecolor="white")
+    plt.close(fig)
+    return buf.getvalue()
+
+
 class Telegram:
     def __init__(self, token: str, chat_id: str):
         self.base = f"https://api.telegram.org/bot{token}"
@@ -251,6 +272,22 @@ class Telegram:
             _post_with_retry(f"{self.base}/sendMessage", timeout=30,
                              data={"chat_id": self.chat_id, "text": msg,
                                    "parse_mode": "HTML"})
+
+    def send_answer(self, text: str) -> None:
+        """Send an answer, rendering any ```latex blocks as formula images."""
+        pos = 0
+        for m in _LATEX_FENCE.finditer(text):
+            if text[pos:m.start()].strip():
+                self.send_text(text[pos:m.start()])
+            try:
+                png = render_latex_block(m.group(1).splitlines())
+                self.send_photo(png, "")
+            except Exception:
+                log.exception("latex render failed; sending as text")
+                self.send_text("```\n" + m.group(1).strip() + "\n```")
+            pos = m.end()
+        if text[pos:].strip():
+            self.send_text(text[pos:])
 
     def send_photo(self, data: bytes, caption: str) -> None:
         ext = "png" if media_type(data) == "image/png" else "jpg"
@@ -314,7 +351,7 @@ def solve(claude_exe: str, tg: Telegram, cfg: dict) -> None:
         if answer is None:
             answer = ("Error: Claude timed out twice. It may be slow or the first "
                       "run is warming up — try again.")
-        tg.send_text(answer)
+        tg.send_answer(answer)
     except Exception:
         log.exception("solve failed")
     finally:
